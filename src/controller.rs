@@ -323,7 +323,30 @@ impl controller_struct {
 
             }
 
+            b"delete_veth"=>{
+
+            }
             
+            b"start_process"=>{
+
+            }
+
+            b"restart_container_process"=>{
+
+            }
+
+            b"start_container_process"=>{
+                
+            }
+
+            b"stop_container_process"=>{
+                
+            }
+
+            b"delete_container_process"=>{
+                
+            }
+
 
 
             _=>{

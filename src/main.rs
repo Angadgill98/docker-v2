@@ -2,7 +2,7 @@
 mod server;
 mod error;
 mod controller;
-mod brain;
+mod manager;
 
 fn main() {
     println!("Hello, world!");

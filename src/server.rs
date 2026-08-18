@@ -146,12 +146,19 @@ fn HandleOperation(operation_name_buf:Vec<u8>,payload:Vec<u8>)->Vec<u8>{
             let mut final_buf=Vec::new();
             
             
-            let veth_buf=CreateVethPair(payload.clone());
+            let (veth_buf,payload)=CreateVethPair(payload.clone());
             let len=(veth_buf.len() as u64).to_be_bytes().to_vec();
             final_buf.extend_from_slice(&len);
             final_buf.extend_from_slice(&veth_buf);
             
             
+            let (process_buf,payload)=StartProcess(payload.clone());
+            let len=(process_buf.len() as u64).to_be_bytes().to_vec();
+            final_buf.extend_from_slice(&len);
+            final_buf.extend_from_slice(&process_buf);
+            
+        
+
 
 
 
@@ -165,7 +172,7 @@ fn HandleOperation(operation_name_buf:Vec<u8>,payload:Vec<u8>)->Vec<u8>{
     }
 }
 
-fn CreateVethPair(payload:Vec<u8>)->Vec<u8>{
+fn CreateVethPair(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
     let mut buf=Vec::new();
     let controller_commamnd=b"create_veth".to_vec();
     let len=(controller_commamnd.len() as u64).to_be_bytes();
@@ -180,16 +187,17 @@ fn CreateVethPair(payload:Vec<u8>)->Vec<u8>{
 
 
     let (container_name_buf,payload)=simplify(payload);
+    let container_name_buf_len=container_name_buf.len() as u64;
     
     let mut veth_front=b"_veth_front".to_vec();
-    let len=(veth_front.len() as u64).to_be_bytes();
+    let len=(veth_front.len() as u64 +container_name_buf_len).to_be_bytes();
     buf.extend_from_slice(&len.to_vec());
     veth_front.extend_from_slice(&container_name_buf);
     buf.extend_from_slice(&veth_front);
     
 
     let mut veth_back=b"_veth_front".to_vec();
-    let len=(veth_back.len() as u64).to_be_bytes();
+    let len=(veth_back.len() as u64+container_name_buf_len).to_be_bytes();
     buf.extend_from_slice(&len.to_vec());
     veth_back.extend_from_slice(&container_name_buf);
     buf.extend_from_slice(&veth_back);
@@ -200,8 +208,37 @@ fn CreateVethPair(payload:Vec<u8>)->Vec<u8>{
     final_buf.extend_from_slice(&buf);
     
 
-    final_buf
+    (final_buf,payload)
 
 }
 
+fn StartProcess(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
+    let mut buf=Vec::new();
+    let controller_commamnd=b"start_process".to_vec();
+    let len=(controller_commamnd.len() as u64).to_be_bytes();
+    buf.extend_from_slice(&len.to_vec());
+    buf.extend_from_slice(&controller_commamnd);
 
+    let mut final_buf=Vec::new();
+    final_buf.extend_from_slice(&buf);
+
+    buf.clear();
+
+    let (path_buf,payload)=simplify(payload);
+    let len=(path_buf.len() as u64).to_be_bytes().to_vec();
+    buf.extend_from_slice(&len);
+    buf.extend_from_slice(&path_buf);
+
+
+    let (arguments_buf,payload)=simplify(payload);
+    let len=(arguments_buf.len() as u64).to_be_bytes().to_vec();
+    buf.extend_from_slice(&len);
+    buf.extend_from_slice(&arguments_buf);
+
+    
+    
+
+    final_buf.extend_from_slice(&buf);
+
+    (final_buf,payload)
+}
