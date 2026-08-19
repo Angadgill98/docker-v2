@@ -3,6 +3,7 @@ use std::{collections::{HashMap, HashSet}, ffi::CString, mem, net::Ipv4Addr};
 
 use ipnetwork::Ipv4Network;
 use rand::RngExt;
+use tokio::sync::oneshot;
 
 use crate::{IP_pool::{self, IPpool}, controller::{self, controller_struct}};
 
@@ -51,46 +52,70 @@ impl manager_struct {
         }
     }
 
-    async fn HandleOperation(&mut self,operation:Vec<u8>,payload:Vec<u8>){
+    pub async fn ToExecute(&mut self, buf: Vec<u8>) {
+        // println!("{:?}", buf);
 
+        let mut remaining = buf;
+
+        while !remaining.is_empty() {
+            if remaining.is_empty() {
+                break;
+            }
+            let (command_buf, payload) = simplify(remaining);
+
+            let (command_payload, payload) = simplify(payload);
+
+            remaining = payload;
+
+            self.HandleOperation(command_buf, command_payload).await;
+        }
+    }
+
+    async fn HandleOperation(&mut self,operation:Vec<u8>,payload:Vec<u8>){
+        // println!("{:?}   {:?}", operation,payload);
+        
         match operation.as_slice() {
             b"start_process"=>{
                 
 
 
                 let (process_buf,payload)=simplify(payload);
-                let path;
-                let args;
-                {
-                    let (path_buf, payload) = simplify(process_buf);
+                // let path;
+                // let args;
+                // {
+                //     let (path_buf, payload) = simplify(process_buf);
 
-                    path = CString::new(str::from_utf8(&path_buf).unwrap()).unwrap();
+                //     path = CString::new(str::from_utf8(&path_buf).unwrap()).unwrap();
 
-                    let (args_buf, _payload) = simplify(payload);
+                //     let (args_buf, _payload) = simplify(payload);
 
-                    let args_string = String::from_utf8(args_buf).unwrap();
+                //     let args_string = String::from_utf8(args_buf).unwrap();
 
-                    let arg_cstrings: Vec<CString> = args_string
-                        .split_whitespace()
-                        .map(|arg| CString::new(arg).unwrap())
-                        .collect();
+                //     let arg_cstrings: Vec<CString> = args_string
+                //         .split_whitespace()
+                //         .map(|arg| CString::new(arg).unwrap())
+                //         .collect();
 
-                    let mut argv: Vec<*const libc::c_char> = Vec::new();
+                //     let mut argv: Vec<*const libc::c_char> = Vec::new();
 
-                    argv.push(path.as_ptr());
+                //     argv.push(path.as_ptr());
 
-                    for arg in &arg_cstrings {
-                        argv.push(arg.as_ptr());
-                    }
+                //     for arg in &arg_cstrings {
+                //         argv.push(arg.as_ptr());
+                //     }
 
-                    argv.push(std::ptr::null());
+                //     argv.push(std::ptr::null());
 
-                    args = argv;
+                //     args = argv;
 
-                }
+                // }
 
+
+                //create veth pair
+                println!("creating a veth");
                 let (veth_buf,payload)=simplify(payload);
                 {   
+                    
                     let mut final_buf=Vec::new();
 
                     let controller_commamnd=b"create_veth".to_vec();
@@ -102,13 +127,21 @@ impl manager_struct {
                     let len=(veth_buf.len() as u64).to_be_bytes().to_vec();
                     final_buf.extend_from_slice(&len);
                     final_buf.extend_from_slice(&veth_buf);
+                    // println!("{:?}",final_buf);
+
 
                     self.controller.ToExecute(final_buf).await;
                 }
+                
+                
+                //asign veth ip
+                println!("assign ip");
+
                 let (veth_front_buf,veth_payload)=simplify(veth_buf);
                 let (veth_back_buf,_)=simplify(veth_payload);
                 {
                     let mut final_buf=Vec::new();
+                    let mut buf=Vec::new();
 
                     let controller_commamnd=b"assign_veth_ip".to_vec();
                     let len=(controller_commamnd.len() as u64).to_be_bytes();
@@ -117,8 +150,8 @@ impl manager_struct {
 
 
                     let len=(veth_back_buf.len() as u64).to_be_bytes().to_vec();
-                    final_buf.extend_from_slice(&len);
-                    final_buf.extend_from_slice(&veth_back_buf);
+                    buf.extend_from_slice(&len);
+                    buf.extend_from_slice(&veth_back_buf);
 
 
                     let bridge_network=self.active_pool.network;
@@ -128,39 +161,141 @@ impl manager_struct {
 
                     let ip_buf=ip.to_string().as_bytes().to_vec();
                     let len=(ip_buf.len() as u64).to_be_bytes().to_vec();
+                    buf.extend_from_slice(&len);
+                    buf.extend_from_slice(&ip_buf);
+                    // Add prefix
+                    let prefix = bridge_network.prefix();
+                    buf.push(prefix);
+
+
+                    let len=(buf.len() as u64).to_be_bytes().to_vec();
+
                     final_buf.extend_from_slice(&len);
-                    final_buf.extend_from_slice(&ip_buf);
+                    final_buf.extend_from_slice(&buf);
 
                     self.controller.ToExecute(final_buf).await;
                 }
 
-                let pid=CreateChildProcess();
 
+
+                //up both veth 
+                println!("up veth");
+                
+                {
+                    let mut final_buf=Vec::new();
+                    let mut buf=Vec::new();
+
+                    let controller_commamnd=b"up_interface".to_vec();
+                    let len=(controller_commamnd.len() as u64).to_be_bytes();
+                    final_buf.extend_from_slice(&len.to_vec());
+                    final_buf.extend_from_slice(&controller_commamnd);
+
+                    let len=(veth_back_buf.len() as u64).to_be_bytes().to_vec();
+                    buf.extend_from_slice(&len);
+                    buf.extend_from_slice(&veth_back_buf);
+
+
+                    let payload_len=(buf.len() as u64).to_be_bytes().to_vec();
+                    final_buf.extend_from_slice(&payload_len);
+                    final_buf.extend_from_slice(&buf);
+
+                    self.controller.ToExecute(final_buf).await;
+
+                    buf.clear();
+                    let mut final_buf=Vec::new();
+
+
+                    let controller_commamnd=b"up_interface".to_vec();
+                    let len=(controller_commamnd.len() as u64).to_be_bytes();
+                    final_buf.extend_from_slice(&len.to_vec());
+                    final_buf.extend_from_slice(&controller_commamnd);
+
+                    let len=(veth_front_buf.len() as u64).to_be_bytes().to_vec();
+                    buf.extend_from_slice(&len);
+                    buf.extend_from_slice(&veth_front_buf);
+
+
+                    let payload_len=(buf.len() as u64).to_be_bytes().to_vec();
+                    final_buf.extend_from_slice(&payload_len);
+                    final_buf.extend_from_slice(&buf);
+
+                    self.controller.ToExecute(final_buf).await;
+
+
+                }
+                let pid=CreateChildProcess();
+                
                 if pid ==-1{
                     println!("Error while creating a child preocess");
                     return;
                 }
-                // child execution
-                if pid==0{
-                    //gateway adn vethsend to toconfigure teh rules
+                let (sender,reciver)=oneshot::channel::<bool>();
+                if pid!=0{
+                    let c_pid: u32 = pid.try_into().expect("PID does not fit into u32");
+                    println!("child pid {} and mvinf veth to it",c_pid);
                     let buf={
                         let mut final_buf=Vec::new();
+                        let mut buf=Vec::new();
 
-                        let controller_commamnd=b"assign_veth_ip".to_vec();
+
+                        let controller_commamnd=b"move_veth_to_netns_by_pid".to_vec();
                         let len=(controller_commamnd.len() as u64).to_be_bytes();
                         final_buf.extend_from_slice(&len.to_vec());
                         final_buf.extend_from_slice(&controller_commamnd);
 
 
                         let len=(veth_back_buf.len() as u64).to_be_bytes().to_vec();
+                        buf.extend_from_slice(&len);
+                        buf.extend_from_slice(&veth_back_buf);
+
+                        let pid_buf = c_pid.to_be_bytes();
+                        let len=(pid_buf.len() as u64).to_be_bytes().to_vec();
+                        buf.extend_from_slice(&len); 
+                        buf.extend_from_slice(&pid_buf);   
+
+
+                        let len=(buf.len() as u64).to_be_bytes().to_vec();
                         final_buf.extend_from_slice(&len);
-                        final_buf.extend_from_slice(&veth_back_buf);
+                        final_buf.extend_from_slice(&buf);
+
+
+                        final_buf
+
+                    };
+                    self.controller.ToExecute(buf).await;
+                    sender.send(true).unwrap();
+                
+                }
+                // child execution
+                reciver.await.unwrap();
+                if pid==0{
+                    //gateway adn vethsend to toconfigure teh rules
+                println!("rotuign config");
+                    
+                    let buf={
+                        let mut final_buf=Vec::new();
+                        let mut buf=Vec::new();
+
+                        let controller_commamnd=b"add_veth_as_default".to_vec();
+                        let len=(controller_commamnd.len() as u64).to_be_bytes();
+                        final_buf.extend_from_slice(&len.to_vec());
+                        final_buf.extend_from_slice(&controller_commamnd);
+
+
+                        let len=(veth_back_buf.len() as u64).to_be_bytes().to_vec();
+                        buf.extend_from_slice(&len);
+                        buf.extend_from_slice(&veth_back_buf);
 
                         let gateway=self.active_pool.gateway_to_bridge.clone();
                         let gateway_buf=gateway.to_string().as_bytes().to_vec();
                         let len=(gateway_buf.len() as u64).to_be_bytes().to_vec();
+                        buf.extend_from_slice(&len);
+                        buf.extend_from_slice(&gateway_buf);
+
+
+                        let len=(buf.len() as u64).to_be_bytes().to_vec();
                         final_buf.extend_from_slice(&len);
-                        final_buf.extend_from_slice(&gateway_buf);
+                        final_buf.extend_from_slice(&buf);
 
                         final_buf
                     
@@ -178,29 +313,7 @@ impl manager_struct {
                 }
                 //dc execution
                 else{
-                    let pid: u32 = pid.try_into().expect("PID does not fit into u32");
-                    let buf={
-                        let mut final_buf=Vec::new();
-
-                        let controller_commamnd=b"move_veth_to_netns_by_pid".to_vec();
-                        let len=(controller_commamnd.len() as u64).to_be_bytes();
-                        final_buf.extend_from_slice(&len.to_vec());
-                        final_buf.extend_from_slice(&controller_commamnd);
-
-
-                        let len=(veth_back_buf.len() as u64).to_be_bytes().to_vec();
-                        final_buf.extend_from_slice(&len);
-                        final_buf.extend_from_slice(&veth_back_buf);
-
-                        let pid_buf = pid.to_be_bytes();
-                        let len=(pid_buf.len() as u64).to_be_bytes().to_vec();
-                        final_buf.extend_from_slice(&len); 
-                        final_buf.extend_from_slice(&pid_buf);   
-
-                        final_buf
-
-                    };
-                    self.controller.ToExecute(buf).await;
+                    
                 }
 
             }
@@ -211,6 +324,9 @@ impl manager_struct {
 
             }
         }
+
+
+
     }
 }
 

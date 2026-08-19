@@ -77,7 +77,7 @@ pub async fn Init(sender:oneshot::Sender<bool>){
         let buf=HandleOperation(operation_name_buf, payload);
 
 
-        server.controller.ToExecute(buf).await;
+        server.manager.ToExecute(buf).await;
 
     }
 
@@ -181,20 +181,20 @@ fn HandleOperation(operation_name_buf:Vec<u8>,payload:Vec<u8>)->Vec<u8>{
             buf.clear();
             
             
-            let (process_buf,payload)=StartProcess(payload);
+            let (process_buf,vpayload)=StartProcess(payload);
             let len=(process_buf.len() as u64).to_be_bytes().to_vec();
             buf.extend_from_slice(&len);
             buf.extend_from_slice(&process_buf);
             
         
-            let (veth_buf,payload)=CreateVethPairForCon(payload);
+            let (veth_buf,payload)=CreateVethPairForCon(vpayload);
             let len=(veth_buf.len() as u64).to_be_bytes().to_vec();
             buf.extend_from_slice(&len);
             buf.extend_from_slice(&veth_buf);
 
 
-            // let len=(buf.len() as u64).to_be_bytes();
-            // final_buf.extend_from_slice(&len.to_vec());
+            let len=(buf.len() as u64).to_be_bytes();
+            final_buf.extend_from_slice(&len.to_vec());
             final_buf.extend_from_slice(&buf);
 
 
