@@ -1,0 +1,15 @@
+cargo build --release
+
+
+
+
+sudo ./target/release/docker-v2
+
+
+
+sudo ./target/debug/docker-v2
+
+
+
+
+rtnetlink_old = { package = "rtnetlink", version = "0.14" }

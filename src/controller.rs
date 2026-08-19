@@ -6,26 +6,39 @@ use rtnetlink::{Handle, LinkBridge, LinkUnspec, LinkVeth, packet_route::RouteNet
 
 use crate::error::ServerError;
 
-use rtnetlink::{new_connection, IpVersion, RouteMessageBuilder};
+use rtnetlink::{ RouteMessageBuilder};
 pub struct controller_struct{
     rtnetlink:Handle,
-    rtnetcon:Connection<RouteNetlinkMessage>
 }
 
 impl controller_struct {
-    pub fn new()->Self{
-        let (a,b,v)=rtnetlink::new_connection().unwrap();
-        Self{
-            rtnetlink:b,
-            rtnetcon:a
+    pub fn new() -> Self {
+        let (connection, handle, _) =
+            rtnetlink::new_connection().unwrap();
+
+        tokio::spawn(connection);
+
+        Self {
+            rtnetlink: handle,
         }
     }
     
-    pub fn ToExecute(&self,buf:Vec<u8>){
-        let mut remaining=buf;
-        loop {
-            let(command_buf,payload)=simplify(remaining);
-            remaining=payload;
+    pub async fn ToExecute(&self, buf: Vec<u8>) {
+        // println!("{:?}", buf);
+
+        let mut remaining = buf;
+
+        while !remaining.is_empty() {
+            if remaining.is_empty() {
+                break;
+            }
+            let (command_buf, payload) = simplify(remaining);
+
+            let (command_payload, payload) = simplify(payload);
+
+            remaining = payload;
+
+            self.HandleCommands(command_buf, command_payload).await;
         }
     }
 
@@ -67,7 +80,8 @@ impl controller_struct {
                     Ok(())=>{}
                     Err(e)=>{
                         let e=ServerError::RT_net_Error(e);
-                        println!("ServerError:{:?}",e);
+                        println!("failed to create bridge :{}",e);
+                        return ;
                     }
                 }
                 let index=match self.GetIndex(bridge_name).await{
@@ -75,48 +89,27 @@ impl controller_struct {
                         index
                     }
                     Err(e)=>{
-                        println!("{:?}",e);
+                        println!("faile tofi{}",e);
                         return ;
                     }
                 };
 
-                
-
-                
-                match self.rtnetlink
-                    .link()
-                    .set(
-                        LinkUnspec::new_with_index(index)
-                            .up()
-                            .build()
-                    )
-                    .execute()
-                    .await
-
-                {
-                    Ok(a)=>{}
-                    Err(e)=>{
-                        let e=ServerError::RT_net_Error(e);
-                        println!("{:?}",e);
-                        return ;
-                    }
-
-                }
 
                 
             }
 
             b"assign_ip_bridge"=>{
+
                 let(bridge_name_buf,payload)=simplify(payload);
 
                 let bridge_name=String::from_utf8(bridge_name_buf).unwrap();
 
-                let index=match self.GetIndex(bridge_name).await{
+                let index=match self.GetIndex(bridge_name.clone()).await{
                     Ok(index)=>{
                         index
                     }
                     Err(e)=>{
-                        println!("{:?}",e);
+                        println!("falied to find index of bridge {}",e);
                         return ;
                     }
                 };
@@ -128,7 +121,8 @@ impl controller_struct {
                 
 
 
-                let prefix=payload.pop().unwrap();
+                let prefix = payload[0];
+                println!("{} {} {} {}",bridge_name,ip,prefix ,index);
                 match self.rtnetlink
                     .address()
                     .add(index, ip.into(), prefix)
@@ -141,7 +135,7 @@ impl controller_struct {
 
                     Err(e) => {
                         let e=ServerError::RT_net_Error(e);
-                        println!("{:?}",e);
+                        println!("failed to assing ip  {}",e);
                         return ;
                     }
                 }
@@ -158,7 +152,7 @@ impl controller_struct {
                         index
                     }
                     Err(e)=>{
-                        println!("{:?}",e);
+                        println!("failed to being he interafec up {}",e);
                         return ;
                     }
                 };
@@ -179,7 +173,7 @@ impl controller_struct {
                     Ok(a)=>{}
                     Err(e)=>{
                         let e=ServerError::RT_net_Error(e);
-                        println!("{:?}",e);
+                        println!("{}",e);
                         return ;
                     }
 
@@ -205,7 +199,7 @@ impl controller_struct {
                 {
                     Ok(())=>{}
                     Err(e)=>{
-                        println!("{:?}",e);
+                        println!("{}",e);
                         return ;
                     }
                 }
@@ -220,7 +214,7 @@ impl controller_struct {
                         index
                     }
                     Err(e)=>{
-                        println!("{:?}",e);
+                        println!("{}",e);
                         return ;
                     }
                 };
@@ -245,7 +239,8 @@ impl controller_struct {
                 {
                     Ok(())=>{}
                     Err(e)=>{
-                        println!("{:?}",e);
+                        
+                        println!("{}",e);
                         return ;
                     }
                 }
@@ -260,7 +255,7 @@ impl controller_struct {
                         index
                     }
                     Err(e)=>{
-                        println!("{:?}",e);
+                        println!("{}",e);
                         return ;
                     }
                 };
@@ -288,21 +283,35 @@ impl controller_struct {
                 {
                     Ok(())=>{}
                     Err(e)=>{
-                        println!("{:?}",e);
+                        println!("{}",e);
                         return ;
                     }
                 }
             }
             //to be excuted in the child itlsef
             b"add_veth_as_default"=>{
-                let gateway_ip = Ipv4Addr::new(192, 168, 1, 1);
-                let interface_index = 2; // e.g. index for eth0
+                let(veth_name_buf,payload)=simplify(payload);
+                let veth_name=str::from_utf8(&veth_name_buf).unwrap();
+                
+                let index=match self.GetIndex(veth_name.to_string()).await{
+                    Ok(index)=>{
+                        index
+                    }
+                    Err(e)=>{
+                        println!("{}",e);
+                        return ;
+                    }
+                };
+                let(veth_ip_buf,mut payload)=simplify(payload);
 
+                let gateway_ip:Ipv4Addr=str::from_utf8(&veth_ip_buf).unwrap().parse().unwrap();
+                
+                
                
                 let route_msg = RouteMessageBuilder::<Ipv4Addr>::new()
                     .destination_prefix(Ipv4Addr::UNSPECIFIED, 0)
                     .gateway(gateway_ip)
-                    .output_interface(interface_index)
+                    .output_interface(index)
                     .build();
 
                 match self.rtnetlink.route()
@@ -312,7 +321,7 @@ impl controller_struct {
                 {
                     Ok(())=>{}
                     Err(e)=>{
-                        println!("{:?}",e);
+                        println!("{}",e);
                         return ;
                     }
                 }
@@ -324,7 +333,31 @@ impl controller_struct {
             }
 
             b"delete_veth"=>{
-
+                let(veth_name_buf,payload)=simplify(payload);
+                let veth_name=str::from_utf8(&veth_name_buf).unwrap();
+                
+                let index=match self.GetIndex(veth_name.to_string()).await{
+                    Ok(index)=>{
+                        index
+                    }
+                    Err(e)=>{
+                        println!("{}",e);
+                        return ;
+                    }
+                };
+                 match self.rtnetlink.link()
+                .del(index)
+                .execute()
+                .await
+                {
+                    Ok(())=>{
+                        
+                    }
+                    Err(e)=>{
+                        println!("{}",e);
+                        return ;
+                    }
+                }
             }
             
             b"start_process"=>{
@@ -344,7 +377,7 @@ impl controller_struct {
             }
 
             b"delete_container_process"=>{
-                
+
             }
 
 

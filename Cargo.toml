@@ -8,11 +8,12 @@ dotenv = "0.15.0"
 
 
 rtnetlink = "0.21.0"
-rtnetlink_old = { package = "rtnetlink", version = "0.14" }
 
 tokio = { version = "1.53.1", features = ["full"] }
 
-
+ipnetwork = "0.20"
 
 
 futures-util = "0.3"
+libc = "0.2.189"
+rand = "0.10.2"

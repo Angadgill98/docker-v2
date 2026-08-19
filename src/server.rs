@@ -1,17 +1,18 @@
 
 
-use tokio::{io::AsyncReadExt, net::{TcpListener, tcp::{OwnedReadHalf, OwnedWriteHalf}}};
+use tokio::{io::AsyncReadExt, net::{TcpListener, tcp::{OwnedReadHalf, OwnedWriteHalf}}, sync::oneshot};
 
-use crate::{controller, error::ServerError};
+use crate::{controller, error::ServerError, manager};
 
 struct server_struct{
-    read:OwnedReadHalf,
-    write:OwnedWriteHalf,
-    controller:controller::controller_struct
+    // read:OwnedReadHalf,
+    // write:OwnedWriteHalf,
+    controller:controller::controller_struct,
+    manager:manager::manager_struct
 }
 
 
-pub async fn Init(){
+pub async fn Init(sender:oneshot::Sender<bool>){
     let socket=CreateSocket().await;
     let socket =match socket {
         Ok(socket)=>socket,
@@ -20,6 +21,15 @@ pub async fn Init(){
             return ;
         }
     };
+    let mut server=server_struct{
+        // read:read_stream,
+        // write:write_strema,
+        controller:controller::controller_struct::new(),
+        manager:manager::manager_struct::new().await,
+    };
+
+    sender.send(true).unwrap();
+
 
     let (mut stream ,client_addr)=match socket.accept().await{
         Ok((stream ,client_addr))=>(stream ,client_addr),
@@ -30,17 +40,13 @@ pub async fn Init(){
         }
     };
 
-    let (read_stream , write_strema)=stream.into_split();
+    let (mut read_stream , write_strema)=stream.into_split();
 
-    let mut server=server_struct{
-        read:read_stream,
-        write:write_strema,
-        controller:controller::controller_struct::new()
-    };
+    
 
     loop{
         let mut buf_len=[0u8;8];
-        match server.read.read_exact(&mut buf_len).await {
+        match read_stream.read_exact(&mut buf_len).await {
             Ok(_) => {}
 
             Err(e) => {
@@ -55,7 +61,7 @@ pub async fn Init(){
 
         let mut payload=vec![0u8;len];
 
-        match server.read.read_exact(&mut payload).await{
+        match read_stream.read_exact(&mut payload).await{
             Ok(_) => {}
 
             Err(e) => {
@@ -71,7 +77,7 @@ pub async fn Init(){
         let buf=HandleOperation(operation_name_buf, payload);
 
 
-        server.controller.ToExecute(buf);
+        server.controller.ToExecute(buf).await;
 
     }
 
@@ -142,25 +148,54 @@ fn HandleOperation(operation_name_buf:Vec<u8>,payload:Vec<u8>)->Vec<u8>{
             final_buf
         }
 
-        b"create container"=>{
+        b"create_veth"=>{
             let mut final_buf=Vec::new();
-            
-            
+
+            // let mut buf=Vec::new();
+            let controller_commamnd=b"create_veth".to_vec();
+            let len=(controller_commamnd.len() as u64).to_be_bytes();
+            final_buf.extend_from_slice(&len.to_vec());
+            final_buf.extend_from_slice(&controller_commamnd);
+
+
             let (veth_buf,payload)=CreateVethPair(payload.clone());
             let len=(veth_buf.len() as u64).to_be_bytes().to_vec();
             final_buf.extend_from_slice(&len);
             final_buf.extend_from_slice(&veth_buf);
+
+
+            final_buf
+        }
+
+        b"create container"=>{
+            let mut final_buf=Vec::new();
+
+
+            let mut  buf=Vec::new();
+            let controller_commamnd=b"start_process".to_vec();
+            let len=(controller_commamnd.len() as u64).to_be_bytes();
+            buf.extend_from_slice(&len.to_vec());
+            buf.extend_from_slice(&controller_commamnd);
+            
+            final_buf.extend_from_slice(&buf);
+            buf.clear();
             
             
-            let (process_buf,payload)=StartProcess(payload.clone());
+            let (process_buf,payload)=StartProcess(payload);
             let len=(process_buf.len() as u64).to_be_bytes().to_vec();
-            final_buf.extend_from_slice(&len);
-            final_buf.extend_from_slice(&process_buf);
+            buf.extend_from_slice(&len);
+            buf.extend_from_slice(&process_buf);
             
         
+            let (veth_buf,payload)=CreateVethPairForCon(payload);
+            let len=(veth_buf.len() as u64).to_be_bytes().to_vec();
+            buf.extend_from_slice(&len);
+            buf.extend_from_slice(&veth_buf);
 
 
-
+            // let len=(buf.len() as u64).to_be_bytes();
+            // final_buf.extend_from_slice(&len.to_vec());
+            final_buf.extend_from_slice(&buf);
 
 
             final_buf
@@ -173,17 +208,41 @@ fn HandleOperation(operation_name_buf:Vec<u8>,payload:Vec<u8>)->Vec<u8>{
 }
 
 fn CreateVethPair(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
-    let mut buf=Vec::new();
-    let controller_commamnd=b"create_veth".to_vec();
-    let len=(controller_commamnd.len() as u64).to_be_bytes();
-    buf.extend_from_slice(&len.to_vec());
-    buf.extend_from_slice(&controller_commamnd);
+    
 
+    // let mut buf=Vec::new();
     let mut final_buf=Vec::new();
-    final_buf.extend_from_slice(&buf);
+    
 
 
-    buf.clear();
+    let (veth_front_buf,payload)=simplify(payload);
+    let len=(veth_front_buf.len() as u64 ).to_be_bytes();
+    final_buf.extend_from_slice(&len.to_vec());
+    final_buf.extend_from_slice(&veth_front_buf);
+    
+
+    let (veth_back_buf,payload)=simplify(payload);
+    let len=(veth_back_buf.len() as u64 ).to_be_bytes();
+    final_buf.extend_from_slice(&len.to_vec());
+    final_buf.extend_from_slice(&veth_back_buf);
+
+    
+    // let len=(buf.len() as u64).to_be_bytes();
+    // final_buf.extend_from_slice(&len.to_vec());
+    // final_buf.extend_from_slice(&buf);
+    
+
+    (final_buf,payload)
+
+}
+
+
+fn CreateVethPairForCon(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
+    let mut buf=Vec::new();
+    
+
+
+
 
 
     let (container_name_buf,payload)=simplify(payload);
@@ -196,33 +255,27 @@ fn CreateVethPair(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
     buf.extend_from_slice(&veth_front);
     
 
-    let mut veth_back=b"_veth_front".to_vec();
+    let mut veth_back=b"_veth_back".to_vec();
     let len=(veth_back.len() as u64+container_name_buf_len).to_be_bytes();
     buf.extend_from_slice(&len.to_vec());
     veth_back.extend_from_slice(&container_name_buf);
     buf.extend_from_slice(&veth_back);
 
     
-    let len=(buf.len() as u64).to_be_bytes();
-    final_buf.extend_from_slice(&len.to_vec());
-    final_buf.extend_from_slice(&buf);
+
     
 
-    (final_buf,payload)
+    (buf,payload)
 
 }
 
 fn StartProcess(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
     let mut buf=Vec::new();
-    let controller_commamnd=b"start_process".to_vec();
-    let len=(controller_commamnd.len() as u64).to_be_bytes();
-    buf.extend_from_slice(&len.to_vec());
-    buf.extend_from_slice(&controller_commamnd);
+    
 
     let mut final_buf=Vec::new();
     final_buf.extend_from_slice(&buf);
 
-    buf.clear();
 
     let (path_buf,payload)=simplify(payload);
     let len=(path_buf.len() as u64).to_be_bytes().to_vec();
@@ -236,7 +289,10 @@ fn StartProcess(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
     buf.extend_from_slice(&arguments_buf);
 
     
-    
+
+
+
+
 
     final_buf.extend_from_slice(&buf);
 
