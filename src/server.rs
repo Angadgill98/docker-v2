@@ -187,10 +187,14 @@ fn HandleOperation(operation_name_buf:Vec<u8>,payload:Vec<u8>)->Vec<u8>{
             buf.extend_from_slice(&process_buf);
             
         
-            let (veth_buf,payload)=CreateVethPairForCon(vpayload);
+            let (veth_buf,payload,container_name_buf)=CreateVethPairForCon(vpayload);
             let len=(veth_buf.len() as u64).to_be_bytes().to_vec();
             buf.extend_from_slice(&len);
             buf.extend_from_slice(&veth_buf);
+
+            let len=(container_name_buf.len() as u64).to_be_bytes().to_vec();
+            buf.extend_from_slice(&len);
+            buf.extend_from_slice(&container_name_buf);
 
 
             let len=(buf.len() as u64).to_be_bytes();
@@ -237,7 +241,7 @@ fn CreateVethPair(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
 }
 
 
-fn CreateVethPairForCon(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
+fn CreateVethPairForCon(payload:Vec<u8>)->(Vec<u8>,Vec<u8>,Vec<u8>){
     let mut buf=Vec::new();
     
 
@@ -265,7 +269,7 @@ fn CreateVethPairForCon(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
 
     
 
-    (buf,payload)
+    (buf,payload,container_name_buf)
 
 }
 
@@ -288,7 +292,10 @@ fn StartProcess(payload:Vec<u8>)->(Vec<u8>,Vec<u8>){
     buf.extend_from_slice(&len);
     buf.extend_from_slice(&arguments_buf);
 
-    
+    let (portbinding_buf,payload)=simplify(payload);
+    let len=(portbinding_buf.len() as u64).to_be_bytes().to_vec();
+    buf.extend_from_slice(&len);
+    buf.extend_from_slice(&portbinding_buf);
 
 
 

@@ -1,4 +1,4 @@
-use std::{collections::{HashMap, HashSet}, ffi::CString, mem, net::Ipv4Addr};
+use std::{collections::{HashMap, HashSet}, ffi::CString, mem, net::Ipv4Addr, process::Command};
 
 
 use ipnetwork::Ipv4Network;
@@ -176,7 +176,37 @@ impl manager_struct {
                     self.controller.ToExecute(final_buf).await;
                 }
 
+                //asssign mac to veth
 
+                let (mac_addr_buf,payload)=simplify(payload);
+                {
+
+                    let mut final_buf=Vec::new();
+                    let mut buf=Vec::new();
+
+
+                    let controller_commamnd=b"assign_mac_to_veth".to_vec();
+                    let len=(controller_commamnd.len() as u64).to_be_bytes();
+                    final_buf.extend_from_slice(&len.to_vec());
+                    final_buf.extend_from_slice(&controller_commamnd);
+
+                    let len=(veth_back_buf.len() as u64).to_be_bytes().to_vec();
+                    buf.extend_from_slice(&len);
+                    buf.extend_from_slice(&veth_back_buf);
+
+                    let len=(mac_addr_buf.len() as u64).to_be_bytes().to_vec();
+                    buf.extend_from_slice(&len);
+                    buf.extend_from_slice(&mac_addr_buf);
+
+
+                    let len=(buf.len() as u64).to_be_bytes().to_vec();
+
+                    final_buf.extend_from_slice(&len);
+                    final_buf.extend_from_slice(&buf);
+
+
+                    self.controller.ToExecute(final_buf).await;
+                }
 
                 //up both veth 
                 println!("up veth");
@@ -221,6 +251,16 @@ impl manager_struct {
 
                     self.controller.ToExecute(final_buf).await;
 
+
+                }
+                
+                //container rootfs
+                let (container_name_buf,payload)=simplify(payload);
+                
+                {
+                    let container_name=String::from_utf8(container_name_buf).unwrap();
+                    let path=format!("/dc/container/{}/rootfs",container_name);
+                    CopyRootFS(&path);
 
                 }
                 let pid=CreateChildProcess();
@@ -297,6 +337,15 @@ impl manager_struct {
                         final_buf.extend_from_slice(&len);
                         final_buf.extend_from_slice(&buf);
 
+
+
+
+                        
+
+
+
+
+
                         final_buf
                     
                     };
@@ -315,6 +364,10 @@ impl manager_struct {
                 else{
                     
                 }
+
+
+
+
 
             }
 
@@ -371,5 +424,34 @@ fn CreateChildProcess()->i64{
     };
     pid
 }
+
+fn CopyRootFS(destination: &str)  {
+    std::fs::create_dir_all(destination).unwrap();
+
+    let status = Command::new("rsync")
+        .args([
+            "-aHAX",
+            "--numeric-ids",
+            "--exclude=/proc/*",
+            "--exclude=/sys/*",
+            "--exclude=/dev/*",
+            "--exclude=/run/*",
+            "--exclude=/tmp/*",
+            "--exclude=/mnt/*",
+            "--exclude=/media/*",
+            "--exclude=/lost+found",
+            "/",
+            destination,
+        ])
+        .status().unwrap();
+
+    if !status.success() {
+        println!("failed to copy");
+       
+    }
+
+   
+}
+
 
 

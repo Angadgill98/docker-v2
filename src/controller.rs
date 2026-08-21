@@ -245,7 +245,41 @@ impl controller_struct {
                     }
                 }
             }
-            
+
+            b"assign_mac_to_veth"=>{
+
+                let(veth_back_name_buf,payload)=simplify(payload);
+                let veth_back=str::from_utf8(&veth_back_name_buf).unwrap();
+                
+                let index=match self.GetIndex(veth_back.to_string()).await{
+                    Ok(index)=>{
+                        index
+                    }
+                    Err(e)=>{
+                        println!("{}",e);
+                        return ;
+                    }
+                };
+                let (mac,payload)=simplify(payload);
+
+                self.rtnetlink.link()
+                .set(LinkUnspec::new_with_index(index).down().build())
+                .execute()
+                .await?;
+                
+
+                self.rtnetlink.link()
+                .set(LinkUnspec::new_with_index(index).address(mac).build())
+                .execute()
+                .await?;
+
+                self.rtnetlink
+                .link()
+                .set(LinkUnspec::new_with_index(index).up().build())
+                .execute()
+                .await?;
+            }
+
             b"move_veth_to_netns_by_pid"=>{
                 let(veth_name_buf,payload)=simplify(payload);
                 let veth_name=str::from_utf8(&veth_name_buf).unwrap();
